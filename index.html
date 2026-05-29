@@ -851,7 +851,10 @@ async function cleanDupAdvance(silent){
   sorted.forEach(function(t){
     if(t.type!=="employee_advance"||!t.empId) return;
     var mk=getMonthKey(t);
-    var key=t.empId+"|"+mk+"|"+Math.abs(Number(t.amount));
+    // เพิ่ม referenceNo และ transferDate ใน key เพื่อป้องกันลบรายการจริงที่เบิกซ้ำจำนวนเท่ากัน
+    var refPart=t.referenceNo?("||ref:"+t.referenceNo):("");
+    var datePart=t.transferDate?("||dt:"+t.transferDate):(t.date?("||dt:"+t.date):"");
+    var key=t.empId+"|"+mk+"|"+Math.abs(Number(t.amount))+refPart+datePart;
     if(!seen[key]){
       seen[key]=t.id;
     } else {
@@ -1239,7 +1242,12 @@ function saveTxs(){
       // การ sync จะทำ explicitly ที่ call site แต่ละจุด (saveRight/saveForm/Drive import)
       // และใน flushPendingToFirebase() สำหรับ record ที่สร้างตอน offline
     })
-    .catch(e=>console.warn("saveTxs Firebase error",e));
+    .catch(e=>{
+      console.warn("saveTxs Firebase error",e);
+      let dirty=JSON.parse(localStorage.getItem("fin_pending_ids")||"[]");
+      txs.forEach(t=>{if(!dirty.includes(t.id))dirty.push(t.id);});
+      localStorage.setItem("fin_pending_ids",JSON.stringify(dirty));
+    });
 }
 
 // ─── EMPLOYEE MATCHING ────────────────────────────────────────────────────────
@@ -2165,7 +2173,12 @@ function renderReport(mTxs){
 }
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
-function openAdd(){mForm=ef();mOcrFilled=false;mOcrPrev=null;showModal(false);}
+function openAdd(){
+  const today=nowISO();
+  const todayMo=today.slice(0,7);
+  const defaultDate=(curMo&&curMo!==todayMo)?(curMo+"-01"):today;
+  mForm=ef({date:defaultDate});mOcrFilled=false;mOcrPrev=null;showModal(false);
+}
 function openEdit(id){const tx=txs.find(t=>t.id===id);if(!tx)return;mForm={...tx,amount:String(tx.amount)};mOcrFilled=false;mOcrPrev=null;showModal(true);}
 
 function showModal(isEdit){
@@ -2262,6 +2275,7 @@ async function saveForm(){
   if(!mForm.party){toast_("⚠️ กรุณากรอกข้อมูลให้ครบ","#b45309");return;}
   mForm.employeeId=mForm.empId||"";
   mForm.employeeName=emp?emp.name:"";
+  mForm.employeeCode=emp?emp.employeeCode||"":"";
   if(!mForm.syncStatus) mForm.syncStatus=emp?"linked":"pending";
 
   if(mForm.id){
@@ -3321,9 +3335,15 @@ async function pullFromFirebase(){
         return true;
       });
       if(pullRejCount>0) addAuditLog_fin('REJECT_PULL_LOCKED_MONTH','multiple',{count:pullRejCount,source:'pullFromFirebase'});
-      // รวม: Firebase (เดือนไม่ล็อก) + local (เดือนล็อก)
+      // รวม: Firebase (เดือนไม่ล็อก) + local (เดือนล็อก) + local-only (ยังไม่ sync ขึ้น Firebase)
       const fbIds=new Set(filteredFbTxs.map(t=>t.id));
-      const mergedTxs=[...filteredFbTxs,...lockedLocalTxs.filter(t=>!fbIds.has(t.id))];
+      const lockedIds=new Set(lockedLocalTxs.map(t=>t.id));
+      const localOnlyTxs=txs.filter(t=>{
+        if(fbIds.has(t.id)||lockedIds.has(t.id)) return false;
+        const mk=getMonthKey(t);
+        return !mk||!isMonthLocked_fin(mk);
+      });
+      const mergedTxs=[...filteredFbTxs,...lockedLocalTxs.filter(t=>!fbIds.has(t.id)),...localOnlyTxs];
       txs=mergedTxs;
       localStorage.setItem("fin_txs",JSON.stringify(txs));
     }
