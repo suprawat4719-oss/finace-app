@@ -692,8 +692,8 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 <div id="toast"></div>
 
 <script>
-const BUILD_TIME="2026-05-29 10:00";
-const BUILD_LABEL="v2.18 · 29 พ.ค. 2569";
+const BUILD_TIME="2026-05-29 11:00";
+const BUILD_LABEL="v2.19 · 29 พ.ค. 2569";
 const MONTHS_TH=["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const CATS={
   income:["รับชำระลูกค้า","มัดจำโครงการ","รับเงินสด/โอน","ดอกเบี้ยรับ","รายได้อื่น"],
@@ -1509,6 +1509,37 @@ async function forceResyncAllAdvances(){
   );
 }
 
+// ─── RESYNC เดือนที่ระบุ (ไม่ลบ) ─────────────────────────────────────────────
+// ใช้แก้ข้อมูลเดือนเก่าที่ status/type ผิด โดยไม่ลบรายการจาก Advance Tracker
+async function resyncMonthAdvances(monthKey){
+  if(!isOnline||!db){toast_("⚠️ ต้องออนไลน์ก่อน","#b45309");return;}
+  if(!monthKey){
+    monthKey=prompt("ระบุเดือนที่ต้องการ sync ใหม่ (YYYY-MM):",curMo);
+    if(!monthKey)return;
+  }
+  const advTxs=txs.filter(t=>shouldSyncAdvance(t)&&getMonthKey(t)===monthKey);
+  if(!advTxs.length){
+    toast_(`ไม่มีรายการเบิกล่วงหน้าในเดือน ${monthKey}`,"#6b7280");
+    return;
+  }
+  if(!confirm(
+    `🔄 Resync เดือน ${monthKey}?\n\n`+
+    `• อัปเดต ${advTxs.length} รายการใน advance_requests + advance_monthly\n`+
+    `• status employee_advance → approved\n`+
+    `• ไม่ลบรายการใด\n\nดำเนินการต่อ?`
+  ))return;
+  toast_(`🔄 กำลัง resync ${advTxs.length} รายการ เดือน ${monthKey}...`,"#0d9488");
+  let ok=0,errors=0;
+  for(const tx of advTxs){
+    try{ await createAdvanceRequest(tx); ok++; }
+    catch(e){ errors++; console.warn("[resyncMonth]",tx.id,e.message); }
+  }
+  toast_(
+    `✅ Resync ${monthKey}: ${ok} รายการ`+(errors?` · ผิดพลาด ${errors}`:""),
+    "#16a34a", 6000
+  );
+}
+
 async function migrateOldData(){
   if(!isOnline||!db){toast_("⚠️ ต้องออนไลน์ก่อน Migrate","#b45309");return;}
   if(!confirm("Migrate รายการเบิกล่วงหน้าทั้งหมดจาก finance_transactions → advance_monthly?\n(ใช้เวลาสักครู่)")) return;
@@ -1546,47 +1577,16 @@ async function syncAdvanceReqsForEmp(empId){
     return;
   }
   toast_(`🔄 กำลัง sync ${advTxs.length} รายการ${emp?" ("+emp.name+")":""}...`,"#0d9488");
-  let created=0,updated=0,errors=0;
+  let synced=0,errors=0;
   for(const tx of advTxs){
     try{
-      const snap=await db.collection("advance_requests").doc(tx.id).get();
-      if(snap.exists){
-        // อัปเดต fields ทั้งหมดที่อาจขาด
-        const empId=tx.employeeId||tx.empId||"";
-        const emp2=employees.find(e=>e.id===empId);
-        const now2=new Date().toISOString();
-        await db.collection("advance_requests").doc(tx.id).set({
-          id:tx.id,
-          employeeId:empId,
-          employeeName:emp2?emp2.name:(tx.employeeName||tx.party||""),
-          amount:Number(tx.amount)||0,
-          date:tx.date||"",
-          transferDate:tx.transferDate||tx.date||"",
-          transferTime:tx.transferTime||tx.slipTime||"",
-          category:tx.category||"",
-          payrollType:tx.payrollType||"",
-          bankName:tx.bankName||tx.method||"",
-          receiverName:tx.receiverName||"",
-          referenceNo:tx.referenceNo||"",
-          slipFileId:tx.slipFileId||"",
-          slipUrl:tx.slipUrl||"",
-          note:tx.note||"",
-          ocrText:tx.ocrText||"",
-          ocrConfidence:tx.ocrConfidence||0,
-          syncStatus:"linked",
-          updatedAt:now2,
-        },{merge:true});
-        // update local
-        txs=txs.map(t=>t.id===tx.id?{...t,syncStatus:"linked"}:t);
-        updated++;
-      } else {
-        await createAdvanceRequest(tx);
-        created++;
-      }
+      // ใช้ createAdvanceRequest ซึ่งเขียน type/status/createdBy ครบทุก field
+      await createAdvanceRequest(tx);
+      synced++;
     }catch(e){errors++;console.warn("[syncAdvReq]",tx.id,e);}
   }
   toast_(
-    `✅ ${emp?emp.name:"ทุกคน"}: สร้าง ${created} · อัปเดต ${updated}${errors?` · ผิดพลาด ${errors}`:""}`,
+    `✅ ${emp?emp.name:"ทุกคน"}: sync ${synced} รายการ${errors?` · ผิดพลาด ${errors}`:""}`,
     "#16a34a", 5000
   );
   render();
@@ -2926,7 +2926,8 @@ function renderEmployees(){
     <div class="pg-sub">จัดการรายชื่อพนักงาน · กำหนดวงเงินเบิก · ประเภทการเบิกที่ได้รับสิทธิ์</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-blue" onclick="openEmpModal(-1)">➕ เพิ่มพนักงาน</button>
-      <button class="btn btn-teal" onclick="syncAdvanceReqsForEmp(null)" title="ส่งรายการที่ยังไม่มีใน Advance Tracker (เพิ่มรายการใหม่ — ไม่เขียนทับ)">📤 Sync ล่วงหน้าทุกคน</button>
+      <button class="btn btn-teal" onclick="syncAdvanceReqsForEmp(null)" title="sync ล่วงหน้าทุกคนทุกเดือน (type/status/createdBy ครบ)">📤 Sync ล่วงหน้าทุกคน</button>
+      <button class="btn btn-blue btn-sm" onclick="resyncMonthAdvances(null)" title="sync ล่วงหน้าเดือนที่ระบุ — ไม่ลบข้อมูล Advance Tracker" style="background:#2563eb;color:#fff;font-weight:600">📅 Resync เดือน</button>
       <button class="btn btn-red btn-sm" onclick="forceResyncAllAdvances()" title="เขียนทับ advance_requests ทั้งหมดด้วยข้อมูล Finance App + ลบรายการ Advance Tracker" style="background:#dc2626;color:#fff;font-weight:700">🔄 Force Resync (เขียนทับ)</button>
       <button class="btn btn-gray btn-sm" onclick="migrateOldData()" title="ย้ายข้อมูลเก่าจาก finance_transactions → advance_monthly (ทำครั้งแรกครั้งเดียว)" style="margin-top:6px">🔀 Migrate → advance_monthly</button>
       <button class="btn btn-gray btn-sm" onclick="cleanDupAdvance(false)" title="ลบรายการเบิกล่วงหน้าที่ซ้ำกัน (empId+เดือน+จำนวน เดียวกัน)" style="margin-top:6px;color:#b45309">🧹 ลบรายการซ้ำ</button>
