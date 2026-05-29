@@ -446,6 +446,7 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
     <div class="tb-title">บัญชีรายรับรายจ่ายบริษัท &nbsp;—&nbsp; <span class="mo" id="topMo"></span><span id="versionBadge" style="font-size:10px;font-weight:600;background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:20px;margin-left:8px;vertical-align:middle;letter-spacing:.02em;cursor:help" title="คลิกเพื่อดูรายละเอียด">v2.5-db-unified</span></div>
     <span id="fb-status" style="font-size:11px;font-weight:600;color:#6b7280;white-space:nowrap">⏳ กำลังโหลด...</span>
     <button class="btn btn-gray btn-sm" onclick="pullFromFirebase()" title="โหลดข้อมูลล่าสุดจาก Firebase มาบันทึกในเครื่อง" style="font-size:11px;padding:4px 10px">🔄 โหลดจาก Firebase</button>
+    <button class="btn btn-gray btn-sm" onclick="pushLocalToFirebase()" title="Push ข้อมูล Local ทั้งหมดขึ้น Firebase (ใช้ครั้งแรกเมื่อย้ายจาก Local มา Firebase)" style="font-size:11px;padding:4px 10px;color:#92400e;border-color:#fcd34d;background:#fffbeb">📤 Push Local → Firebase</button>
     <button class="btn btn-teal" onclick="toast_('✅ พร้อมตรวจแก้แล้ว','#0d9488')">✓ พร้อมตรวจแก้</button>
     <div class="mo-nav">
       <button onclick="navMo(-1)">◀</button>
@@ -725,12 +726,7 @@ const DEFAULT_PAYROLL_TYPES=[
   {id:"other",label:"เบิกอื่นๆ",color:"#374151",bg:"#f3f4f6",icon:"📋"},
 ];
 
-// ─── EMPLOYEE DEFAULT DATA ────────────────────────────────────────────────────
-const DEFAULT_EMPLOYEES=[
-  {id:"emp1",name:"สมชาย ใจดี",dept:"ฝ่ายขาย",limit:5000,payrollTypes:["advance","expense"],active:true,note:""},
-  {id:"emp2",name:"แอน วิไล",dept:"ฝ่ายบัญชี",limit:3000,payrollTypes:["expense","welfare"],active:true,note:""},
-  {id:"emp3",name:"วิชัย รักดี",dept:"ฝ่ายปฏิบัติการ",limit:8000,payrollTypes:["advance","expense","ot"],active:true,note:""},
-];
+const DEFAULT_EMPLOYEES=[];
 
 let txs=[],curMo=getCurMo(),curFilter="all",selId=null,curPg="dashboard";
 let rForm={},rOcrFilled=false,rOcrPrev=null;
@@ -928,6 +924,29 @@ async function processSyncRetryQueue(){
 }
 
 // ─── FIREBASE LOAD HELPERS ────────────────────────────────────────────────────
+async function pushLocalToFirebase(){
+  if(!isOnline||!db){ alert('ไม่ได้เชื่อมต่อ Firebase กรุณารอสักครู่แล้วลองใหม่'); return; }
+  const localTxs = JSON.parse(localStorage.getItem('fin_txs')||'[]');
+  if(!localTxs.length){ alert('ไม่พบข้อมูลใน Local'); return; }
+  if(!confirm(`พบ ${localTxs.length} รายการใน Local\nต้องการ Push ขึ้น Firebase ทั้งหมดใช่ไหม?\n\n(รายการที่มีอยู่แล้วใน Firebase จะถูก overwrite)`)) return;
+  let ok=0, fail=0;
+  const toast=document.createElement('div');
+  toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;z-index:9999';
+  toast.textContent='⏳ กำลัง Push...';
+  document.body.appendChild(toast);
+  for(const t of localTxs){
+    try{
+      const td=Object.assign({},t);
+      await db.collection('fin_transactions').doc(td.id).set(td);
+      ok++;
+      if(ok%20===0) toast.textContent=`⏳ Push แล้ว ${ok}/${localTxs.length}...`;
+    } catch(e){ fail++; console.warn('push fail:',t.id,e); }
+  }
+  toast.textContent=`✅ Push สำเร็จ ${ok} รายการ${fail?` | ❌ ล้มเหลว ${fail} รายการ`:''}`;
+  setTimeout(()=>toast.remove(), 4000);
+  if(ok>0) await loadFromFirebase();
+}
+
 async function loadFromFirebase(){
   // รอ Firebase SDK โหลดเสร็จ (max 5 วินาที)
   let waited = 0;
@@ -979,7 +998,7 @@ async function loadFromFirebase(){
     } else {
       // ถ้า Firestore ว่าง → ใช้ข้อมูล localStorage หรือ seed
       const r=localStorage.getItem("fin_txs");
-      txs=r?JSON.parse(r):seed();
+      txs=r?JSON.parse(r):[];
     }
     // โหลด employees (ใช้ collection เดิมของ advance-tracker)
     const empSnap=await db.collection("employees").get();
@@ -1038,7 +1057,7 @@ async function loadFromFirebase(){
     isOnline=false;
     setFbStatus("offline");
     // fallback localStorage
-    try{const r=localStorage.getItem("fin_txs");txs=r?JSON.parse(r):seed();}catch{txs=seed();}
+    try{const r=localStorage.getItem("fin_txs");txs=r?JSON.parse(r):[];}catch{txs=[];}
     try{const c=localStorage.getItem("fin_cats");if(c){dynCats=JSON.parse(c);Object.assign(CATS,dynCats);}}catch{}
     try{const e=localStorage.getItem("fin_employees");employees=e?JSON.parse(e):JSON.parse(JSON.stringify(DEFAULT_EMPLOYEES));}catch{employees=JSON.parse(JSON.stringify(DEFAULT_EMPLOYEES));}
     try{const p=localStorage.getItem("fin_ptypes");payrollTypes=p?JSON.parse(p):JSON.parse(JSON.stringify(DEFAULT_PAYROLL_TYPES));}catch{payrollTypes=JSON.parse(JSON.stringify(DEFAULT_PAYROLL_TYPES));}
@@ -1139,23 +1158,11 @@ function getCurrentMonthTxs(){
 // types ที่นับเป็น "รายจ่าย" (ลบออกจาก net)
 function isExpenseType(t){return t!=="income";}
 
-function seed(){
-  const[y,mo]=curMo.split("-");const d=n=>`${y}-${mo}-${String(n).padStart(2,"0")}`;
-  return[
-    {id:uid(),date:d(2),type:"income",party:"ABC Corporation",category:"รับชำระลูกค้า",amount:350000,method:"โอนธนาคาร",status:"confirmed",note:"Invoice #001",slipUrl:""},
-    {id:uid(),date:d(5),type:"expense",party:"ซัพพลายเออร์ไทย",category:"อุปกรณ์สำนักงาน",amount:45000,method:"โอนธนาคาร",status:"confirmed",note:"",slipUrl:""},
-    {id:uid(),date:d(8),type:"payroll",party:"คุณสมชาย ใจดี",category:"ค่าน้ำมัน",amount:3500,method:"โอนธนาคาร",status:"pending",note:"เบิกค่าน้ำมันประจำเดือน",slipUrl:""},
-    {id:uid(),date:d(10),type:"income",party:"XYZ Company",category:"มัดจำโครงการ",amount:200000,method:"พร้อมเพย์",status:"confirmed",note:"",slipUrl:""},
-    {id:uid(),date:d(12),type:"expense",party:"การไฟฟ้านครหลวง",category:"ค่าสาธารณูปโภค",amount:12000,method:"โอนธนาคาร",status:"confirmed",note:"",slipUrl:""},
-    {id:uid(),date:d(15),type:"payroll",party:"คุณแอน วิไล",category:"ค่าเดินทาง",amount:1800,method:"เงินสด",status:"pending",note:"ค่าเดินทางไปประชุม",slipUrl:""},
-    {id:uid(),date:d(18),type:"income",party:"ลูกค้า DEF-22",category:"รับเงินสด/โอน",amount:85000,method:"โอนธนาคาร",status:"confirmed",note:"",slipUrl:""},
-  ];
-}
 
 window.onload=async()=>{
   setFbStatus("loading");
   // โหลด localStorage ก่อนเพื่อให้แสดงผลเร็ว (ไม่รอ Firebase)
-  try{const r=localStorage.getItem("fin_txs");txs=r?JSON.parse(r):seed();}catch{txs=seed();}
+  try{const r=localStorage.getItem("fin_txs");txs=r?JSON.parse(r):[];}catch{txs=[];}
   // แจ้งผู้ใช้ถ้ามีข้อมูล offline รอ sync
   const _pending=JSON.parse(localStorage.getItem("fin_pending_ids")||"[]");
   if(_pending.length>0) setTimeout(()=>toast_(`⏳ มี ${_pending.length} รายการรอ sync ขึ้น Firebase`,"#d97706"),800);
@@ -1870,6 +1877,7 @@ async function saveRight(){
     toast_("✏️ แก้ไขแล้ว","#2563eb");
     saveTxs(); clearRight(); render();
     if(isEmpType(rForm.type)&&rForm.empId) syncPayrollToV2([rForm.empId]);
+    if(shouldSyncAdvance(rForm)) await saveFinanceTransaction(rForm);
   } else {
     if(isDupSlip(rForm)){
       showDupPopup(rForm, async ()=>{
@@ -1937,7 +1945,12 @@ function delTx(id){
   if(!confirm("ลบรายการนี้?"))return;
   txs=txs.filter(t=>t.id!==id);
   if(selId===id)clearRight();
-  saveTxs(); toast_("🗑 ลบแล้ว","#dc2626"); render();
+  saveTxs();
+  if(isOnline&&db){
+    db.collection("fin_transactions").doc(id).delete()
+      .catch(e=>console.warn("[delTx] Firestore delete failed:",e));
+  }
+  toast_("🗑 ลบแล้ว","#dc2626"); render();
   if(tx&&tx.type==="payroll"&&tx.empId) syncPayrollToV2([tx.empId]);
 }
 
