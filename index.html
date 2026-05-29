@@ -1124,7 +1124,7 @@ function isEmpType(t){return["payroll","employee_advance","employee_reimbursemen
 
 // ─── ADVANCE SYNC GUARD ───────────────────────────────────────────────────────
 // รายการ category ของ payroll เก่า ที่ถือว่าเป็น "เบิกล่วงหน้า" (legacy support)
-const LEGACY_ADV_CATS=["เบิกล่วงหน้าเงินเดือน","เบิกค่าโปรเจ็กต์","เบิกด่วน","เบิกอื่นๆ"];
+const LEGACY_ADV_CATS=["เบิกล่วงหน้าเงินเดือน","เบิกค่าโปรเจ็กต์","เบิกด่วน"];
 function shouldSyncAdvance(tx){
   // ส่งไป Advance Tracker เฉพาะ employee_advance เท่านั้น
   // รองรับข้อมูลเก่า: payroll + category ใดก็ตามที่เป็น advance category
@@ -1337,6 +1337,7 @@ async function createAdvanceRequest(tx){
     date:tx.date||nowISO(),
     transferDate:tx.transferDate||tx.date||nowISO(),
     transferTime:tx.transferTime||tx.slipTime||"",
+    type:tx.type||"",
     category:tx.category||"",
     payrollType:tx.payrollType||"",
     bankName:tx.bankName||tx.method||"",
@@ -1427,12 +1428,18 @@ async function syncAdvance(tx){
     createdAt:tx.createdAt||now,
     updatedAt:now,
   };
-  // เช็ค duplicate ก่อนเขียน — ถ้ามี empId+month+amount ซ้ำอยู่แล้ว ไม่เขียนเพิ่ม
+  // เช็ค duplicate ก่อนเขียน — empId+month+amount+date ตรงกันถึงจะถือว่าซ้ำ
+  // ถ้ามี referenceNo ต่างกันถือว่าไม่ซ้ำ (เบิก 2 ครั้งเท่ากันแต่คนละสลิป)
   const existingSnap=await db.collection("advance_monthly").doc(monthKey).collection("records").get();
   const dupExists=existingSnap.docs.some(function(d){
     if(d.id===tx.id) return false; // ตัวเดียวกัน OK
     var dd=d.data();
-    return dd.employeeId===empId && Math.abs(Number(dd.amount))===Math.abs(Number(data.amount));
+    if(!( dd.employeeId===empId && Math.abs(Number(dd.amount))===Math.abs(Number(data.amount)) )) return false;
+    // ถ้าทั้งคู่มี referenceNo และต่างกัน → ไม่ใช่ duplicate
+    if(dd.referenceNo && data.referenceNo && dd.referenceNo!==data.referenceNo) return false;
+    // เพิ่ม date check: ต่างวันกันถือว่าไม่ซ้ำ
+    if(dd.transferDate && data.transferDate && dd.transferDate!==data.transferDate) return false;
+    return true;
   });
   if(dupExists){
     console.warn("[advance_monthly] duplicate detected, skip:",tx.id,"month:",monthKey);
@@ -1948,7 +1955,18 @@ function delTx(id){
   saveTxs();
   if(isOnline&&db){
     db.collection("fin_transactions").doc(id).delete()
-      .catch(e=>console.warn("[delTx] Firestore delete failed:",e));
+      .catch(e=>console.warn("[delTx] fin_transactions delete failed:",e));
+    db.collection("finance_transactions").doc(id).delete()
+      .catch(e=>console.warn("[delTx] finance_transactions delete failed:",e));
+    if(tx&&shouldSyncAdvance(tx)){
+      const monthKey=getMonthKey(tx);
+      db.collection("advance_requests").doc(id).delete()
+        .catch(e=>console.warn("[delTx] advance_requests delete failed:",e));
+      if(monthKey){
+        db.collection("advance_monthly").doc(monthKey).collection("records").doc(id).delete()
+          .catch(e=>console.warn("[delTx] advance_monthly delete failed:",e));
+      }
+    }
   }
   toast_("🗑 ลบแล้ว","#dc2626"); render();
   if(tx&&tx.type==="payroll"&&tx.empId) syncPayrollToV2([tx.empId]);
