@@ -622,6 +622,17 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
       <div class="pg-hd">⚙️ ตั้งค่าระบบ</div>
       <div class="pg-sub">กำหนดค่า API และการตั้งค่าทั่วไป</div>
       <div style="max-width:540px;display:flex;flex-direction:column;gap:14px;margin-top:4px">
+
+        <!-- Backup / Restore -->
+        <div style="background:#fff;border-radius:8px;border:1px solid #e9ecef;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">💾 สำรอง / กู้คืนข้อมูล</div>
+          <div style="font-size:12px;color:#6b7280;margin-bottom:14px">ส่งออกข้อมูลทั้งหมด (รายการ, พนักงาน, หมวดหมู่, ล็อกเดือน) เป็นไฟล์ JSON หรือโหลดไฟล์สำรองกลับมาแทนที่ข้อมูลปัจจุบัน</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-green" onclick="exportBackupFin()" style="flex:1">⬇️ สำรองข้อมูล</button>
+            <button class="btn btn-gray" onclick="importBackupFin()" style="flex:1">⬆️ โหลดข้อมูลสำรอง</button>
+          </div>
+        </div>
+
         <div style="background:#fff;border-radius:8px;border:1px solid #e9ecef;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
           <div style="font-size:14px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px">🔑 Anthropic API Key <span class="ocr-chip">OCR</span></div>
           <div style="font-size:12px;color:#6b7280;margin-bottom:14px">ใส่ API Key จาก <a href="https://console.anthropic.com" target="_blank" style="color:#2563eb">console.anthropic.com</a> เพื่อเปิดใช้งานอ่านสลิปอัตโนมัติ</div>
@@ -667,15 +678,6 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
           <div id="driveScanLog" style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:8px 12px;min-height:32px;border:1px solid #e9ecef"></div>
         </div>
 
-        <!-- Backup / Restore -->
-        <div style="background:#fff;border-radius:8px;border:1px solid #e9ecef;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px">💾 สำรอง / กู้คืนข้อมูล</div>
-          <div style="font-size:12px;color:#6b7280;margin-bottom:14px">ส่งออกข้อมูลทั้งหมด (รายการ, พนักงาน, หมวดหมู่, ล็อกเดือน) เป็นไฟล์ JSON หรือโหลดไฟล์สำรองกลับมาแทนที่ข้อมูลปัจจุบัน</div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-green" onclick="exportBackupFin()" style="flex:1">⬇️ สำรองข้อมูล</button>
-            <button class="btn btn-gray" onclick="importBackupFin()" style="flex:1">⬆️ โหลดข้อมูลสำรอง</button>
-          </div>
-        </div>
 
       </div>
     </div>
