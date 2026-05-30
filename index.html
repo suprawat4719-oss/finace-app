@@ -667,6 +667,16 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
           <div id="driveScanLog" style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:8px 12px;min-height:32px;border:1px solid #e9ecef"></div>
         </div>
 
+        <!-- Backup / Restore -->
+        <div style="background:#fff;border-radius:8px;border:1px solid #e9ecef;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">💾 สำรอง / กู้คืนข้อมูล</div>
+          <div style="font-size:12px;color:#6b7280;margin-bottom:14px">ส่งออกข้อมูลทั้งหมด (รายการ, พนักงาน, หมวดหมู่, ล็อกเดือน) เป็นไฟล์ JSON หรือโหลดไฟล์สำรองกลับมาแทนที่ข้อมูลปัจจุบัน</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-green" onclick="exportBackupFin()" style="flex:1">⬇️ สำรองข้อมูล</button>
+            <button class="btn btn-gray" onclick="importBackupFin()" style="flex:1">⬆️ โหลดข้อมูลสำรอง</button>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -692,8 +702,8 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 <div id="toast"></div>
 
 <script>
-const BUILD_TIME="2026-05-30 16:00";
-const BUILD_LABEL="v2.21 · 30 พ.ค. 2569";
+const BUILD_TIME="2026-05-30 18:00";
+const BUILD_LABEL="v2.22 · 30 พ.ค. 2569";
 const MONTHS_TH=["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const CATS={
   income:["รับชำระลูกค้า","มัดจำโครงการ","รับเงินสด/โอน","ดอกเบี้ยรับ","รายได้อื่น"],
@@ -2493,6 +2503,58 @@ async function runOCRDrive(imgData,driveFile,apiKey){
   localStorage.setItem("fin_txs",JSON.stringify(txs));
   await saveFinanceTransaction(newTx);
   await logDriveImport({fileId:driveFile.id,fileName:driveFile.name,status:"imported",txId:newTx.id,syncStatus});
+}
+
+function exportBackupFin(){
+  const bk={
+    version:BUILD_LABEL,
+    exportedAt:new Date().toISOString(),
+    data:{
+      txs:JSON.parse(localStorage.getItem("fin_txs")||"[]"),
+      employees:JSON.parse(localStorage.getItem("fin_employees")||"[]"),
+      cats:JSON.parse(localStorage.getItem("fin_cats")||"null"),
+      ptypes:JSON.parse(localStorage.getItem("fin_ptypes")||"null"),
+      monthLocks:JSON.parse(localStorage.getItem("fin_month_locks")||"{}")
+    }
+  };
+  const blob=new Blob([JSON.stringify(bk,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,"-");
+  a.href=url; a.download="finance-backup-"+ts+".json"; a.click();
+  URL.revokeObjectURL(url);
+  toast_("✅ ดาวน์โหลดไฟล์สำรองข้อมูลแล้ว","#16a34a");
+}
+
+function importBackupFin(){
+  const inp=document.createElement("input");
+  inp.type="file"; inp.accept=".json,application/json";
+  inp.onchange=function(e){
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        const bk=JSON.parse(ev.target.result);
+        if(!bk.data||!bk.exportedAt){toast_("❌ ไฟล์ไม่ถูกต้อง","#dc2626");return;}
+        const d=bk.data;
+        const msg="นำเข้าข้อมูลสำรองจาก "+bk.exportedAt.slice(0,10)+" ("+bk.version+")\n\n"+
+          "• รายการ: "+(d.txs||[]).length+" รายการ\n"+
+          "• พนักงาน: "+(d.employees||[]).length+" คน\n"+
+          "• ล็อกเดือน: "+Object.keys(d.monthLocks||{}).length+" เดือน\n\n"+
+          "⚠️ ข้อมูลปัจจุบันจะถูกแทนที่ทั้งหมด ยืนยันหรือไม่?";
+        if(!confirm(msg)) return;
+        if(d.txs)       localStorage.setItem("fin_txs",JSON.stringify(d.txs));
+        if(d.employees) localStorage.setItem("fin_employees",JSON.stringify(d.employees));
+        if(d.cats)      localStorage.setItem("fin_cats",JSON.stringify(d.cats));
+        if(d.ptypes)    localStorage.setItem("fin_ptypes",JSON.stringify(d.ptypes));
+        if(d.monthLocks) localStorage.setItem("fin_month_locks",JSON.stringify(d.monthLocks));
+        toast_("✅ นำเข้าข้อมูลสำรองแล้ว — กำลังโหลดใหม่…","#16a34a");
+        setTimeout(function(){location.reload();},1200);
+      }catch(err){toast_("❌ อ่านไฟล์ไม่ได้: "+err.message,"#dc2626");}
+    };
+    reader.readAsText(file,"utf-8");
+  };
+  inp.click();
 }
 
 function saveApiKey(){
