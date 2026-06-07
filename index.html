@@ -704,8 +704,8 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 <div id="toast"></div>
 
 <script>
-const BUILD_TIME="2026-06-07 12:00";
-const BUILD_LABEL="v2.23 · 7 มิ.ย. 2569";
+const BUILD_TIME="2026-06-07 14:00";
+const BUILD_LABEL="v2.24 · 7 มิ.ย. 2569";
 const MONTHS_TH=["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const CATS={
   income:["รับชำระลูกค้า","มัดจำโครงการ","รับเงินสด/โอน","ดอกเบี้ยรับ","รายได้อื่น"],
@@ -1881,41 +1881,64 @@ function rPayrollEmpChange(empId){
 // ─── DUPLICATE SLIP CHECK ─────────────────────────────────────────────────────
 // เช็คซ้ำจาก date + slipTime (เวลาบนหัวสลิป) เป็นหลัก
 // ถ้า slipTime ว่างเปล่า (ไม่ได้อ่านมา) ให้ fallback เช็ค date + amount + party
-function isDupSlip(form, excludeId){
+// ค้นหา tx ที่ซ้ำกับ form — return tx ที่พบ หรือ null
+// ใช้ร่วมกันระหว่าง isDupSlip() และ showDupPopup() เพื่อให้ logic ตรงกัน
+function findDupTx(form, excludeId){
   excludeId = excludeId || "";
-  // เช็ค referenceNo ก่อน (แม่นที่สุด)
+
+  // Branch 1: referenceNo (แม่นที่สุด — ทั้ง tRef และ ref ต้องไม่ว่าง)
   var ref=(form.referenceNo||"").trim();
-  if(ref && txs.some(function(t){ return t.id!==excludeId && (t.referenceNo||"").trim()===ref; }))
-    return true;
-  // เช็ค employee_advance ซ้ำด้วย empId + monthKey + amount + date
-  // ต้องเช็ค transferDate ด้วย — ยอดเท่ากันในเดือนเดียวกันแต่คนละวันไม่ถือว่าซ้ำ
+  if(ref){
+    var rMatch=txs.find(function(t){
+      var tRef=(t.referenceNo||"").trim();
+      return tRef && t.id!==excludeId && tRef===ref;
+    });
+    if(rMatch){ console.log("[dupCheck] branch:referenceNo ref="+ref+" match="+rMatch.id); return rMatch; }
+  }
+
+  // Branch 2: employee_advance — empId + เดือน + ยอด + วันโอน
+  // (ยอดเท่ากันในเดือนเดียวกันแต่คนละวันไม่ถือว่าซ้ำ)
   if(form.type==="employee_advance" && form.empId){
     var mk=getMonthKey(form);
     var fDate=(form.transferDate||form.date||"").slice(0,10);
-    if(txs.some(function(t){
+    var advMatch=txs.find(function(t){
       if(t.id===excludeId) return false;
-      if(!(t.type==="employee_advance" && t.empId===form.empId && getMonthKey(t)===mk && String(Number(t.amount))===String(Number(form.amount)))) return false;
+      if(t.type!=="employee_advance" || t.empId!==form.empId) return false;
+      if(getMonthKey(t)!==mk) return false;
+      if(String(Number(t.amount))!==String(Number(form.amount))) return false;
       var tDate=(t.transferDate||t.date||"").slice(0,10);
       if(fDate && tDate && fDate!==tDate) return false; // ต่างวัน = ไม่ซ้ำ
       return true;
-    })) return true;
+    });
+    if(advMatch){ console.log("[dupCheck] branch:employee_advance match="+advMatch.id); return advMatch; }
+    return null; // employee_advance ใช้ branch นี้เท่านั้น — ไม่ตกลง fallback
   }
-  var hasTime = form.slipTime && form.slipTime.trim() !== "";
-  return txs.some(function(t){
-    if(t.id === excludeId) return false;
-    if(!t.date || t.date !== form.date) return false;
+
+  // Branch 3: slipTime (date check อยู่ก่อน ป้องกันสลิปเวลาเดียวกันคนละวัน)
+  var hasTime=form.slipTime && form.slipTime.trim()!=="";
+  var fallbackMatch=txs.find(function(t){
+    if(t.id===excludeId) return false;
+    if(!t.date || t.date!==form.date) return false; // date ต้องตรงก่อนเสมอ
     if(hasTime){
-      // มีเวลา → เช็คเฉพาะ date + slipTime
-      return (t.slipTime || "").trim() === form.slipTime.trim();
+      return (t.slipTime||"").trim()===form.slipTime.trim();
     } else {
-      // ไม่มีเวลา → fallback เช็ค date + amount + party หรือ empId
-      return String(Number(t.amount)) === String(Number(form.amount))
+      // Branch 4: date + amount + party/empId
+      return String(Number(t.amount))===String(Number(form.amount))
         && (
-          (form.empId && t.empId && t.empId === form.empId)
-          || (t.party || "").trim() === (form.party || "").trim()
+          (form.empId && t.empId && t.empId===form.empId)
+          || (t.party||"").trim()===(form.party||"").trim()
         );
     }
   });
+  if(fallbackMatch){
+    console.log("[dupCheck] branch:"+(hasTime?"slipTime":"date+amount+party")+" match="+fallbackMatch.id);
+    return fallbackMatch;
+  }
+  return null;
+}
+
+function isDupSlip(form, excludeId){
+  return !!findDupTx(form, excludeId);
 }
 
 async function saveRight(){
@@ -3313,18 +3336,19 @@ var _dupCallback = null;
 
 function showDupPopup(form, onConfirm){
   _dupCallback = onConfirm;
-  var hasTime = form.slipTime && form.slipTime.trim() !== "";
-  var existTx = txs.find(function(t){
-    if(!t.date || t.date !== form.date) return false;
-    if(hasTime) return (t.slipTime||"").trim() === form.slipTime.trim();
-    return String(Number(t.amount)) === String(Number(form.amount))
-      && (t.party||"").trim() === (form.party||"").trim();
-  });
+  // ใช้ findDupTx() เดียวกับ isDupSlip() — ได้ existTx ที่ตรงกับสาเหตุจริง
+  var existTx = findDupTx(form, "");
   var infoHTML = "";
   if(existTx){
-    var dupReason = hasTime
-      ? `วันที่ <b>${existTx.date}</b> และเวลาสลิป <b>${existTx.slipTime}</b> ตรงกัน`
-      : `วันที่ <b>${existTx.date}</b> · จำนวน <b>฿${fmtMoney(existTx.amount)}</b> · คู่ค้า <b>${existTx.party||"-"}</b> ตรงกัน`;
+    var hasTime = form.slipTime && form.slipTime.trim() !== "";
+    var dupReason;
+    if((form.referenceNo||"").trim() && (existTx.referenceNo||"").trim()===(form.referenceNo||"").trim()){
+      dupReason = `เลขอ้างอิง <b>${existTx.referenceNo}</b> ตรงกัน`;
+    } else if(hasTime){
+      dupReason = `วันที่ <b>${existTx.date}</b> และเวลาสลิป <b>${existTx.slipTime}</b> ตรงกัน`;
+    } else {
+      dupReason = `วันที่ <b>${existTx.date}</b> · จำนวน <b>฿${fmtMoney(existTx.amount)}</b> · คู่ค้า <b>${existTx.party||existTx.employeeName||"-"}</b> ตรงกัน`;
+    }
     infoHTML = `
       <div style="margin-bottom:6px;font-weight:600">รายการที่มีอยู่ในระบบ:</div>
       ${dupReason}<br>
