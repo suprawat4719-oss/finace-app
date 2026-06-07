@@ -1429,6 +1429,30 @@ async function createAdvanceRequest(tx){
   }
 }
 
+// ลบ advance_monthly record เดือนเก่าเมื่อ edit เปลี่ยนเดือน
+async function deleteOldAdvanceMonthly(id, oldMonthKey){
+  if(!isOnline||!db||!oldMonthKey) return;
+  try{
+    await db.collection("advance_monthly").doc(oldMonthKey).collection("records").doc(id).delete();
+    console.log("[edit] deleted old advance_monthly",oldMonthKey,id);
+  }catch(e){
+    console.warn("[edit] advance_monthly old month delete failed:",e);
+  }
+}
+
+// เตือนถ้าวันที่ต่างเดือนกับเดือนที่กำลังดูอยู่
+function checkDateMonth(dateStr){
+  if(!dateStr) return;
+  const inputMo=dateStr.slice(0,7);
+  if(!inputMo||inputMo===curMo) return;
+  const mn=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  const [y,m]=inputMo.split('-');
+  const inputLabel=mn[Number(m)-1]+' '+(Number(y)+543);
+  const [cy,cm]=curMo.split('-');
+  const curLabel=mn[Number(cm)-1]+' '+(Number(cy)+543);
+  toast_(`⚠️ วันที่อยู่เดือน ${inputLabel} แต่กำลังดูเดือน ${curLabel} — รายการจะบันทึกในเดือน ${inputLabel}`,"#b45309",7000);
+}
+
 // ─── SYNC → advance_monthly/{YYYY-MM}/records/{id} ───────────────────────────
 // collection ใหม่สำหรับ query รายเดือนเร็ว ไม่ลบ advance_requests เดิม
 async function syncAdvance(tx){
@@ -1828,7 +1852,7 @@ function renderRightForm(){
 
   document.getElementById("ocrFormBody").innerHTML=`
     <div class="frow"><div class="flbl">วันที่ทำรายการ</div>
-      <input type="date" ${fi("date")} value="${rForm.date}" onchange="rForm.date=this.value">
+      <input type="date" ${fi("date")} value="${rForm.date}" onchange="rForm.date=this.value;checkDateMonth(this.value)">
     </div>
     <div class="frow"><div class="flbl">ประเภท</div>
       <select ${fi("type")} onchange="rForm.type=this.value;rForm.category='';rForm.empId='';rForm.payrollType='';renderRightForm()">
@@ -1954,11 +1978,17 @@ async function saveRight(){
   if(!rForm.syncStatus) rForm.syncStatus=emp?"linked":"pending";
 
   if(rForm.id){
+    const _oldTxR=txs.find(t=>t.id===rForm.id);
+    const _oldMoR=_oldTxR?getMonthKey(_oldTxR):"";
+    const _newMoR=getMonthKey(rForm);
     txs=txs.map(t=>t.id===rForm.id?{...rForm,amount:Number(rForm.amount)}:t);
     toast_("✏️ แก้ไขแล้ว","#2563eb");
     saveTxs(); clearRight(); render();
     if(isEmpType(rForm.type)&&rForm.empId) syncPayrollToV2([rForm.empId]);
-    if(shouldSyncAdvance(rForm)) await saveFinanceTransaction(rForm);
+    if(shouldSyncAdvance(rForm)){
+      if(_oldMoR&&_oldMoR!==_newMoR) await deleteOldAdvanceMonthly(rForm.id,_oldMoR);
+      await saveFinanceTransaction(rForm);
+    }
   } else {
     if(isDupSlip(rForm)){
       showDupPopup(rForm, async ()=>{
@@ -2044,6 +2074,19 @@ function delTx(id){
       if(monthKey){
         db.collection("advance_monthly").doc(monthKey).collection("records").doc(id).delete()
           .catch(e=>console.warn("[delTx] advance_monthly delete failed:",e));
+      }
+      // ลบออกจาก employees.transactions[] ด้วย — ป้องกัน legacy record หลุดกลับมา
+      const empId=tx.employeeId||tx.empId;
+      if(empId){
+        db.collection("employees").doc(empId).get().then(snap=>{
+          if(!snap.exists) return;
+          const empData=snap.data();
+          const oldTxs=empData.transactions||[];
+          const newTxs=oldTxs.filter(t=>t.id!==id&&(t.ref||"")!==(tx.referenceNo||"__none__"));
+          if(newTxs.length<oldTxs.length)
+            db.collection("employees").doc(empId).update({transactions:newTxs})
+              .catch(e=>console.warn("[delTx] employees.transactions cleanup failed:",e));
+        }).catch(e=>console.warn("[delTx] employees get failed:",e));
       }
     }
   }
@@ -2313,7 +2356,7 @@ function renderMBody(loading){
     ${prevH}
     <div style="flex:1;display:flex;flex-direction:column;gap:9px">
       <div class="frow"><div class="flbl">ประเภท</div><div class="type-btns">${tBtns}</div></div>
-      <div class="frow"><div class="flbl">วันที่</div><input type="date" ${fi("date")} value="${mForm.date}" onchange="mForm.date=this.value"></div>
+      <div class="frow"><div class="flbl">วันที่</div><input type="date" ${fi("date")} value="${mForm.date}" onchange="mForm.date=this.value;checkDateMonth(this.value)"></div>
       ${payrollFields}
       <div class="frow"><div class="flbl">${partyLabel}</div><input ${fi("party")} value="${mForm.party}" placeholder="${partyPlaceholder}" oninput="mForm.party=this.value"></div>
       <div class="frow"><div class="flbl">หมวดหมู่</div><select ${fi("category")} onchange="mForm.category=this.value"><option value="">-- เลือก --</option>${cats}</select></div>
@@ -2350,10 +2393,16 @@ async function saveForm(){
   if(!mForm.syncStatus) mForm.syncStatus=emp?"linked":"pending";
 
   if(mForm.id){
+    const _oldTxM=txs.find(t=>t.id===mForm.id);
+    const _oldMoM=_oldTxM?getMonthKey(_oldTxM):"";
+    const _newMoM=getMonthKey(mForm);
     txs=txs.map(t=>t.id===mForm.id?{...mForm,amount:Number(mForm.amount)}:t);
     toast_("✏️ แก้ไขแล้ว","#2563eb");saveTxs(); closeModal(); render();
     if(isEmpType(mForm.type)&&mForm.empId) syncPayrollToV2([mForm.empId]);
-    if(shouldSyncAdvance(mForm)) await saveFinanceTransaction(mForm);
+    if(shouldSyncAdvance(mForm)){
+      if(_oldMoM&&_oldMoM!==_newMoM) await deleteOldAdvanceMonthly(mForm.id,_oldMoM);
+      await saveFinanceTransaction(mForm);
+    }
   }else{
     if(isDupSlip(mForm)){
       showDupPopup(mForm, async ()=>{
@@ -2827,6 +2876,8 @@ async function runOCR(file,apiKey){
     };
     if(_match.status==="suggest"&&_match.emp) toast_(`🔗 แนะนำพนักงาน: ${_match.emp.name} (กรุณาตรวจสอบ)`,"#d97706",5000);
     if(_match.status==="suggest_multi") toast_(`⚠️ ชื่อตรงหลายคน (${_match.candidates.length}) — กรุณาเลือกพนักงานเอง`,"#d97706",6000);
+    // เตือนถ้า OCR อ่านวันต่างเดือนกับที่กำลังดูอยู่
+    checkDateMonth(resolvedDate);
     mOcrFilled=true;
     document.getElementById("mTitle").textContent="✅ ตรวจสอบข้อมูลจากสลิป";
     document.getElementById("mOcrTag").style.display="inline";
