@@ -704,8 +704,8 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 <div id="toast"></div>
 
 <script>
-const BUILD_TIME="2026-05-30 18:00";
-const BUILD_LABEL="v2.22 · 30 พ.ค. 2569";
+const BUILD_TIME="2026-06-07 12:00";
+const BUILD_LABEL="v2.23 · 7 มิ.ย. 2569";
 const MONTHS_TH=["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const CATS={
   income:["รับชำระลูกค้า","มัดจำโครงการ","รับเงินสด/โอน","ดอกเบี้ยรับ","รายได้อื่น"],
@@ -1887,15 +1887,17 @@ function isDupSlip(form, excludeId){
   var ref=(form.referenceNo||"").trim();
   if(ref && txs.some(function(t){ return t.id!==excludeId && (t.referenceNo||"").trim()===ref; }))
     return true;
-  // เช็ค employee_advance ซ้ำด้วย empId + monthKey (ป้องกันกรอกชื่อผิดแล้วหลุดเช็ค)
+  // เช็ค employee_advance ซ้ำด้วย empId + monthKey + amount + date
+  // ต้องเช็ค transferDate ด้วย — ยอดเท่ากันในเดือนเดียวกันแต่คนละวันไม่ถือว่าซ้ำ
   if(form.type==="employee_advance" && form.empId){
     var mk=getMonthKey(form);
+    var fDate=(form.transferDate||form.date||"").slice(0,10);
     if(txs.some(function(t){
       if(t.id===excludeId) return false;
-      return t.type==="employee_advance"
-        && t.empId===form.empId
-        && getMonthKey(t)===mk
-        && String(Number(t.amount))===String(Number(form.amount));
+      if(!(t.type==="employee_advance" && t.empId===form.empId && getMonthKey(t)===mk && String(Number(t.amount))===String(Number(form.amount)))) return false;
+      var tDate=(t.transferDate||t.date||"").slice(0,10);
+      if(fDate && tDate && fDate!==tDate) return false; // ต่างวัน = ไม่ซ้ำ
+      return true;
     })) return true;
   }
   var hasTime = form.slipTime && form.slipTime.trim() !== "";
