@@ -236,6 +236,9 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 #dupBox .dup-btns button:hover{opacity:.85}
 #dupBox .dup-cancel{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb!important}
 #dupBox .dup-confirm{background:#dc2626;color:#fff}
+#dupBox .dup-goto{display:none;width:100%;padding:8px 12px;margin-bottom:12px;border-radius:8px;border:1.5px solid #0ea5e9;background:#f0f9ff;color:#0369a1;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s}
+#dupBox .dup-goto:hover{opacity:.8}
+#dupBox .dup-info .dup-month-tag{display:inline-block;background:#dc2626;color:#fff;padding:1px 8px;border-radius:4px;font-size:12px;font-weight:700;margin:2px 0}
 
 /* ── ALL PAGE ── */
 .pg-hd{font-size:17px;font-weight:700}
@@ -704,8 +707,8 @@ tbody td{padding:11px 14px;font-size:13px;vertical-align:middle}
 <div id="toast"></div>
 
 <script>
-const BUILD_TIME="2026-06-07 14:00";
-const BUILD_LABEL="v2.24 · 7 มิ.ย. 2569";
+const BUILD_TIME="2026-06-10 20:00";
+const BUILD_LABEL="v2.25 · 10 มิ.ย. 2569";
 const MONTHS_TH=["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const CATS={
   income:["รับชำระลูกค้า","มัดจำโครงการ","รับเงินสด/โอน","ดอกเบี้ยรับ","รายได้อื่น"],
@@ -3384,35 +3387,75 @@ function exportCSV(){
 
 // ─── DUPLICATE SLIP POPUP ─────────────────────────────────────────────────────
 var _dupCallback = null;
+var _dupExistTxMonth = null;
 
 function showDupPopup(form, onConfirm){
   _dupCallback = onConfirm;
-  // ใช้ findDupTx() เดียวกับ isDupSlip() — ได้ existTx ที่ตรงกับสาเหตุจริง
   var existTx = findDupTx(form, "");
   var infoHTML = "";
+  _dupExistTxMonth = null;
   if(existTx){
     var hasTime = form.slipTime && form.slipTime.trim() !== "";
     var dupReason;
     if((form.referenceNo||"").trim() && (existTx.referenceNo||"").trim()===(form.referenceNo||"").trim()){
       dupReason = `เลขอ้างอิง <b>${existTx.referenceNo}</b> ตรงกัน`;
     } else if(hasTime){
-      dupReason = `วันที่ <b>${existTx.date}</b> และเวลาสลิป <b>${existTx.slipTime}</b> ตรงกัน`;
+      dupReason = `วันที่ <b>${fmtDate(existTx.date)}</b> และเวลาสลิป <b>${existTx.slipTime}</b> ตรงกัน`;
     } else {
-      dupReason = `วันที่ <b>${existTx.date}</b> · จำนวน <b>฿${fmtMoney(existTx.amount)}</b> · คู่ค้า <b>${existTx.party||existTx.employeeName||"-"}</b> ตรงกัน`;
+      dupReason = `วันที่ <b>${fmtDate(existTx.date)}</b> · จำนวน <b>฿${fmtMoney(existTx.amount)}</b> · คู่ค้า <b>${existTx.party||existTx.employeeName||"-"}</b> ตรงกัน`;
     }
+    _dupExistTxMonth = getTxMonth(existTx);
+    var monthLabel = _dupExistTxMonth ? moLabel(_dupExistTxMonth) : "-";
+    var txDateLine = existTx.date ? `วันที่รายการ: <b>${fmtDate(existTx.date)}</b>` : "";
+    var transferLine = (existTx.transferDate && existTx.transferDate !== existTx.date)
+      ? ` &nbsp;|&nbsp; วันที่สลิป: <b>${fmtDate(existTx.transferDate)}</b>` : "";
+    var partyStr = existTx.party||existTx.receiverName||existTx.employeeName||"-";
+    var noteLine = existTx.note ? `<br>หมายเหตุ: <b>${existTx.note}</b>` : "";
+    var savedStr = "";
+    var iso = existTx.savedAt||existTx.createdAt||"";
+    if(iso){
+      try{
+        var sd=new Date(iso);
+        savedStr = sd.toLocaleDateString("th-TH",{day:"2-digit",month:"short",year:"numeric"})+" "+sd.toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit"});
+      }catch(_){ savedStr=iso.slice(0,16).replace("T"," "); }
+    }
+    var idShort = existTx.id ? existTx.id.slice(0,10) : "";
     infoHTML = `
       <div style="margin-bottom:6px;font-weight:600">รายการที่มีอยู่ในระบบ:</div>
       ${dupReason}<br>
+      เดือน: <span class="dup-month-tag">📅 ${monthLabel}</span><br>
+      ${txDateLine}${transferLine}<br>
+      จำนวน: <b>฿${fmtMoney(existTx.amount)}</b> &nbsp;|&nbsp; คู่ค้า: <b>${partyStr}</b><br>
       ประเภท: <b>${TL[existTx.type]||existTx.type}</b> · หมวด: <b>${existTx.category||"-"}</b><br>
-      สถานะ: <b>${existTx.status==="confirmed"?"✓ ยืนยันแล้ว":"⏳ รอตรวจสอบ"}</b>`;
+      สถานะ: <b>${existTx.status==="confirmed"?"✓ ยืนยันแล้ว":"⏳ รอตรวจสอบ"}</b>${noteLine}
+      ${savedStr ? `<br><span style="color:#9f1239;font-size:11px">บันทึกเมื่อ: ${savedStr}</span>` : ""}
+      ${idShort ? `<br><span style="color:#9ca3af;font-size:11px">ID: ${idShort}…</span>` : ""}`;
   } else {
     infoHTML = "ตรวจพบข้อมูลที่อาจซ้ำกับรายการเดิม";
   }
   document.getElementById("dupInfo").innerHTML = infoHTML;
-  // ย้าย overlay ไปเป็น child โดยตรงของ document.body เพื่อหลีกเลี่ยง overflow:hidden clipping
+  var goBtn = document.getElementById("dupGoMonthBtn");
+  if(goBtn){
+    if(_dupExistTxMonth && _dupExistTxMonth !== curMo){
+      goBtn.style.display = "block";
+      goBtn.textContent = "🔍 ไปดูรายการในเดือน " + moLabel(_dupExistTxMonth) + " เพื่อลบรายการที่ผิด";
+    } else {
+      goBtn.style.display = "none";
+    }
+  }
   var ov = document.getElementById("dupOverlay");
   document.body.appendChild(ov);
   ov.classList.add("open");
+}
+
+function goToDupMonth(){
+  if(_dupExistTxMonth){
+    curMo = _dupExistTxMonth;
+    closeDupPopup();
+    showPg("dashboard");
+    render();
+    toast_("📅 เปลี่ยนไปดูเดือน " + moLabel(_dupExistTxMonth) + " แล้ว — หาและลบรายการที่ผิดได้เลย","#0369a1",5000);
+  }
 }
 
 function closeDupPopup(){
@@ -3753,6 +3796,7 @@ async function rawDelTx(id){
     </div>
     <div class="dup-body">
       <div class="dup-info" id="dupInfo"></div>
+      <button id="dupGoMonthBtn" class="dup-goto" onclick="goToDupMonth()"></button>
       <div class="dup-question">ต้องการบันทึกรายการนี้ซ้ำหรือไม่?</div>
       <div class="dup-btns">
         <button class="dup-cancel" onclick="closeDupPopup()">✕ ยกเลิก / ไม่บันทึก</button>
