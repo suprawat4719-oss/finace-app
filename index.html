@@ -1029,9 +1029,13 @@ async function loadFromFirebase(){
       });
       if(lfRejCount>0) addAuditLog_fin('REJECT_PULL_LOCKED_MONTH','multiple',{count:lfRejCount,source:'loadFromFirebase'});
       // merge: เก็บ local txs ของเดือนล็อกไว้, รวม Firebase txs ของเดือนปกติ + local-only (offline)
+      // FIX: "local-only" ต้องหมายถึง "ยังไม่เคย sync ขึ้น Firebase" เท่านั้น (อยู่ใน fin_pending_ids)
+      // ห้ามถือว่า record ที่ไม่เจอใน Firebase = ของใหม่เสมอไป เพราะอาจเป็น record ที่ถูกลบไปแล้วจริงๆ
+      // (เดิมเข้าใจผิดแบบนั้น ทำให้ record ที่ลบไปแล้วถูกดึงกลับมาใหม่ทุกครั้งที่โหลด/pull จาก Firebase)
       const fbIds=new Set(fbTxs.map(t=>t.id));
       const lockedLocal=(txs||[]).filter(t=>{ const mk=getMonthKey(t); return mk&&isMonthLocked_fin(mk); });
-      const localOnly=(txs||[]).filter(t=>!fbIds.has(t.id)&&!lockedLocal.find(l=>l.id===t.id));
+      const _pendingIdSet=new Set(JSON.parse(localStorage.getItem("fin_pending_ids")||"[]"));
+      const localOnly=(txs||[]).filter(t=>!fbIds.has(t.id)&&!lockedLocal.find(l=>l.id===t.id)&&_pendingIdSet.has(t.id));
       txs=[...fbTxs,...lockedLocal,...localOnly.filter(t=>{ const mk=getMonthKey(t); return !mk||!isMonthLocked_fin(mk); })];
       localStorage.setItem("fin_txs",JSON.stringify(txs));
     } else {
@@ -3555,10 +3559,14 @@ async function pullFromFirebase(){
       });
       if(pullRejCount>0) addAuditLog_fin('REJECT_PULL_LOCKED_MONTH','multiple',{count:pullRejCount,source:'pullFromFirebase'});
       // รวม: Firebase (เดือนไม่ล็อก) + local (เดือนล็อก) + local-only (ยังไม่ sync ขึ้น Firebase)
+      // FIX: local-only ต้องเช็คกับ fin_pending_ids จริงๆ ไม่ใช่แค่ "ไม่เจอใน Firebase"
+      // record ที่ถูกลบใน Firebase จะไม่เจอเหมือนกัน แต่ไม่ใช่ pending — ต้องไม่ถูกดึงกลับมา
       const fbIds=new Set(filteredFbTxs.map(t=>t.id));
       const lockedIds=new Set(lockedLocalTxs.map(t=>t.id));
+      const _pendingIdSetPull=new Set(JSON.parse(localStorage.getItem("fin_pending_ids")||"[]"));
       const localOnlyTxs=txs.filter(t=>{
         if(fbIds.has(t.id)||lockedIds.has(t.id)) return false;
+        if(!_pendingIdSetPull.has(t.id)) return false; // ไม่ได้อยู่ในคิว pending = ไม่ใช่ local-only ที่แท้จริง
         const mk=getMonthKey(t);
         return !mk||!isMonthLocked_fin(mk);
       });
